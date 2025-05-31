@@ -1,9 +1,10 @@
-import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/sqlite';
+import { PostgreSqlDriver } from '@mikro-orm/postgresql';
+import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/core';
 
 @Entity()
-class User {
+class UserNumber {
 
-  @PrimaryKey()
+  @PrimaryKey({generated: 'identity'})
   id!: number;
 
   @Property()
@@ -19,33 +20,36 @@ class User {
 
 }
 
+@Entity()
+class UserBigInt {
+  @PrimaryKey({generated: 'identity'})
+  id!: bigint;
+
+  @Property()
+  name!: string;
+}
+
 let orm: MikroORM;
 
 beforeAll(async () => {
   orm = await MikroORM.init({
-    dbName: ':memory:',
-    entities: [User],
+    driver: PostgreSqlDriver,
+    dbName: 'postgres',
+    port: 35432,
+    password: 'example',
+    entities: [UserNumber, UserBigInt],
     debug: ['query', 'query-params'],
     allowGlobalContext: true, // only for testing
   });
-  await orm.schema.refreshDatabase();
 });
 
 afterAll(async () => {
   await orm.close(true);
 });
 
-test('basic CRUD example', async () => {
-  orm.em.create(User, { name: 'Foo', email: 'foo' });
-  await orm.em.flush();
-  orm.em.clear();
-
-  const user = await orm.em.findOneOrFail(User, { email: 'foo' });
-  expect(user.name).toBe('Foo');
-  user.name = 'Bar';
-  orm.em.remove(user);
-  await orm.em.flush();
-
-  const count = await orm.em.count(User, { email: 'foo' });
-  expect(count).toBe(0);
+test('id as number/bigint primary key with generated identity', async () => {
+  const schemaDump = await orm.schema.getCreateSchemaSQL();
+  
+  expect(schemaDump).toContain('create table "user_number" ("id" int generated always as identity primary key');
+  expect(schemaDump).toContain('create table "user_big_int" ("id" bigint generated always as identity primary key');
 });
