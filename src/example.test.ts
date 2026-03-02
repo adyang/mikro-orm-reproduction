@@ -1,51 +1,62 @@
-import { Entity, MikroORM, PrimaryKey, Property } from '@mikro-orm/sqlite';
+import {Entity, EntityManager, ManyToOne, MikroORM, PrimaryKey, Property} from '@mikro-orm/sqlite';
 
 @Entity()
-class User {
-
+class Author {
   @PrimaryKey()
   id!: number;
 
-  @Property()
-  name: string;
-
   @Property({ unique: true })
-  email: string;
+  name!: string;
+}
 
-  constructor(name: string, email: string) {
-    this.name = name;
-    this.email = email;
-  }
+@Entity()
+class Book {
+  @PrimaryKey()
+  id!: number;
 
+  @ManyToOne(() => Author)
+  author!: Author;
+
+  @Property()
+  title!: string;
 }
 
 let orm: MikroORM;
+let em: EntityManager;
 
 beforeAll(async () => {
   orm = await MikroORM.init({
     dbName: ':memory:',
-    entities: [User],
+    entities: [Author, Book],
     debug: ['query', 'query-params'],
     allowGlobalContext: true, // only for testing
   });
   await orm.schema.refreshDatabase();
+  em = orm.em.fork();
 });
 
 afterAll(async () => {
   await orm.close(true);
 });
 
-test('basic CRUD example', async () => {
-  orm.em.create(User, { name: 'Foo', email: 'foo' });
-  await orm.em.flush();
-  orm.em.clear();
+test('upsert, flush via find concurrently', async () => {
+  await em.transactional(async em => {
+    const pages = [
+      [{id: 1, name: 'Author A'}, {id: 2, name: 'Author B'}],
+      [{id: 3, name: 'Author C'}, {id: 4, name: 'Author D'}]
+    ];
 
-  const user = await orm.em.findOneOrFail(User, { email: 'foo' });
-  expect(user.name).toBe('Foo');
-  user.name = 'Bar';
-  orm.em.remove(user);
-  await orm.em.flush();
+    for (const page of pages) {
+        await Promise.all(page.map(async (rawAuthor) => {
+          const author = em.create(Author, {id: rawAuthor.id, name: rawAuthor.name});
+          await em.upsert(Author, author);
 
-  const count = await orm.em.count(User, { email: 'foo' });
-  expect(count).toBe(0);
+
+          await em.find(Book, {author});
+
+          const book = em.create(Book, { author, title: `Book ${rawAuthor.id}`});
+          await em.upsert(Book, book);
+        }));
+    }
+  });
 });
